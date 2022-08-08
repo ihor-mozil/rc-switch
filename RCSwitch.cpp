@@ -79,18 +79,19 @@ static const VAR_ISR_ATTR RCSwitch::Protocol proto[] = {
 #else
 static const RCSwitch::Protocol PROGMEM proto[] = {
 #endif
-  { 350, {  1, 31 }, {  1,  3 }, {  3,  1 }, false },    // protocol 1
-  { 650, {  1, 10 }, {  1,  2 }, {  2,  1 }, false },    // protocol 2
-  { 100, { 30, 71 }, {  4, 11 }, {  9,  6 }, false },    // protocol 3
-  { 380, {  1,  6 }, {  1,  3 }, {  3,  1 }, false },    // protocol 4
-  { 500, {  6, 14 }, {  1,  2 }, {  2,  1 }, false },    // protocol 5
-  { 450, { 23,  1 }, {  1,  2 }, {  2,  1 }, true },     // protocol 6 (HT6P20B)
-  { 150, {  2, 62 }, {  1,  6 }, {  6,  1 }, false },    // protocol 7 (HS2303-PT, i. e. used in AUKEY Remote)
-  { 200, {  3, 130}, {  7, 16 }, {  3,  16}, false},     // protocol 8 Conrad RS-200 RX
-  { 200, { 130, 7 }, {  16, 7 }, { 16,  3 }, true},      // protocol 9 Conrad RS-200 TX
-  { 365, { 18,  1 }, {  3,  1 }, {  1,  3 }, true },     // protocol 10 (1ByOne Doorbell)
-  { 270, { 36,  1 }, {  1,  2 }, {  2,  1 }, true },     // protocol 11 (HT12E)
-  { 320, { 36,  1 }, {  1,  2 }, {  2,  1 }, true }      // protocol 12 (SM5212)
+  { 360, {  1, 11 }, {  2,  1 }, {  1,  2 }, true },    // protocol 2260
+  // { 350, {  1, 31 }, {  1,  3 }, {  3,  1 }, false },    // protocol 1
+  // { 650, {  1, 10 }, {  1,  2 }, {  2,  1 }, false },    // protocol 2
+  // { 100, { 30, 71 }, {  4, 11 }, {  9,  6 }, false },    // protocol 3
+  // { 380, {  1,  6 }, {  1,  3 }, {  3,  1 }, false },    // protocol 4
+  // { 500, {  6, 14 }, {  1,  2 }, {  2,  1 }, false },    // protocol 5
+  // { 450, { 23,  1 }, {  1,  2 }, {  2,  1 }, true },     // protocol 6 (HT6P20B)
+  // { 150, {  2, 62 }, {  1,  6 }, {  6,  1 }, false },    // protocol 7 (HS2303-PT, i. e. used in AUKEY Remote)
+  // { 200, {  3, 130}, {  7, 16 }, {  3,  16}, false},     // protocol 8 Conrad RS-200 RX
+  // { 200, { 130, 7 }, {  16, 7 }, { 16,  3 }, true},      // protocol 9 Conrad RS-200 TX
+  // { 365, { 18,  1 }, {  3,  1 }, {  1,  3 }, true },     // protocol 10 (1ByOne Doorbell)
+  // { 270, { 36,  1 }, {  1,  2 }, {  2,  1 }, true },     // protocol 11 (HT12E)
+  // { 320, { 36,  1 }, {  1,  2 }, {  2,  1 }, true }      // protocol 12 (SM5212)
 };
 
 enum {
@@ -620,8 +621,8 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
     unsigned long code = 0;
     //Assuming the longer pulse length is the pulse captured in timings[0]
     const unsigned int syncLengthInPulses =  ((pro.syncFactor.low) > (pro.syncFactor.high)) ? (pro.syncFactor.low) : (pro.syncFactor.high);
-    const unsigned int delay = RCSwitch::timings[0] / syncLengthInPulses;
-    const unsigned int delayTolerance = delay * RCSwitch::nReceiveTolerance / 100;
+    const unsigned int firstTimeDelay = pro.pulseLength * syncLengthInPulses;
+    const unsigned int delayTolerance = pro.pulseLength * RCSwitch::nReceiveTolerance / 100;
     
     /* For protocols that start low, the sync period looks like
      *               _________
@@ -640,15 +641,24 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
      *
      * The 2nd saved duration starts the data
      */
-    const unsigned int firstDataTiming = (pro.invertedSignal) ? (2) : (1);
+    unsigned int firstDataIndex = 0;
+    unsigned int delay = 0;
 
-    for (unsigned int i = firstDataTiming; i < changeCount - 1; i += 2) {
+    for (unsigned int i = 0; i < changeCount - 1; i ++) {
+      if (diff(RCSwitch::timings[i], firstTimeDelay) < delayTolerance) {
+        firstDataIndex = i;
+        delay = RCSwitch::timings[i];
+        break;
+      }
+    }
+
+    for (unsigned int i = firstDataIndex + 1; i < changeCount - 1; i += 2) {
         code <<= 1;
-        if (diff(RCSwitch::timings[i], delay * pro.zero.high) < delayTolerance &&
-            diff(RCSwitch::timings[i + 1], delay * pro.zero.low) < delayTolerance) {
+        if (diff(RCSwitch::timings[i], pro.pulseLength * pro.zero.high) < delayTolerance &&
+            diff(RCSwitch::timings[i + 1], pro.pulseLength * pro.zero.low) < delayTolerance) {
             // zero
-        } else if (diff(RCSwitch::timings[i], delay * pro.one.high) < delayTolerance &&
-                   diff(RCSwitch::timings[i + 1], delay * pro.one.low) < delayTolerance) {
+        } else if (diff(RCSwitch::timings[i], pro.pulseLength * pro.one.high) < delayTolerance &&
+                   diff(RCSwitch::timings[i + 1], pro.pulseLength * pro.one.low) < delayTolerance) {
             // one
             code |= 1;
         } else {
@@ -657,9 +667,9 @@ bool RECEIVE_ATTR RCSwitch::receiveProtocol(const int p, unsigned int changeCoun
         }
     }
 
-    if (changeCount > 7) {    // ignore very short transmissions: no device sends them, so this must be noise
+    if (changeCount > 100) {    // ignore very short transmissions: no device sends them, so this must be noise
         RCSwitch::nReceivedValue = code;
-        RCSwitch::nReceivedBitlength = (changeCount - 1) / 2;
+        RCSwitch::nReceivedBitlength = (changeCount - firstDataIndex) / 2;
         RCSwitch::nReceivedDelay = delay;
         RCSwitch::nReceivedProtocol = p;
         return true;
